@@ -171,7 +171,7 @@ class PySAMBatteryPerformanceModel(BatteryPerformanceBaseClass):
 
     Inputs:
         charge_rate (float):
-            Battery charge rate in kilowatts per hour (kW/h).
+            Battery charge rate in kilowatts per hour (kW).
         storage_capacity (float):
             Total energy storage capacity in kilowatt-hours (kWh).
         control_variable (str):
@@ -237,13 +237,14 @@ class PySAMBatteryPerformanceModel(BatteryPerformanceBaseClass):
         input for Pyomo solver integration.
         """
         self.config = PySAMBatteryPerformanceModelConfig.from_dict(
-            merge_shared_inputs(self.options["tech_config"]["model_inputs"], "performance")
+            merge_shared_inputs(self.options["tech_config"]["model_inputs"], "performance"),
+            strict=False,
         )
 
         self.add_input(
             "charge_rate",
             val=self.config.rated_commodity_capacity,
-            units="kW/h",
+            units="kW",
             desc="Battery charge rate",
         )
 
