@@ -48,8 +48,6 @@ technologies:
       model: "heuristic_load_following_controller"
     performance_model:
       model: "pysam_battery"
-    cost_model:
-      model: "pysam_battery"
     model_inputs:
       shared_parameters:
         rated_commodity_capacity: 50000
