@@ -5,10 +5,14 @@ from h2integrate.transporters.cable import CablePerformanceModel
 from h2integrate.converters.steel.steel import SteelPerformanceModel, SteelCostAndFinancialModel
 from h2integrate.converters.wind.wind_plant import WindPlantCostModel, WindPlantPerformanceModel
 from h2integrate.finances.profast_financial import ProFastComp
+from h2integrate.transporters.generic_summer import GenericSummerPerformanceModel
 from h2integrate.converters.hopp.hopp_wrapper import HOPPComponent
 from h2integrate.converters.solar.solar_pysam import PYSAMSolarPlantPerformanceModel
+from h2integrate.storage.generic_storage_cost import GenericStorageCostModel
 from h2integrate.storage.hydrogen.eco_storage import H2Storage
 from h2integrate.storage.battery.pysam_battery import PySAMBatteryPerformanceModel
+from h2integrate.transporters.generic_combiner import GenericCombinerPerformanceModel
+from h2integrate.transporters.generic_splitter import GenericSplitterPerformanceModel
 from h2integrate.converters.nitrogen.simple_ASU import SimpleASUCostModel, SimpleASUPerformanceModel
 from h2integrate.storage.simple_generic_storage import SimpleGenericStorage
 from h2integrate.storage.hydrogen.tank_baseclass import (
@@ -18,8 +22,6 @@ from h2integrate.storage.hydrogen.tank_baseclass import (
 from h2integrate.converters.hydrogen.wombat_model import WOMBATElectrolyzerModel
 from h2integrate.converters.wind.wind_plant_pysam import PYSAMWindPlantPerformanceModel
 from h2integrate.storage.battery.atb_battery_cost import ATBBatteryCostModel
-from h2integrate.transporters.electricity_combiner import CombinerPerformanceModel
-from h2integrate.transporters.electricity_splitter import SplitterPerformanceModel
 from h2integrate.converters.ammonia.ammonia_synloop import (
     AmmoniaSynLoopCostModel,
     AmmoniaSynLoopPerformanceModel,
@@ -36,8 +38,6 @@ from h2integrate.converters.hydrogen.pem_electrolyzer import (
 from h2integrate.converters.solar.atb_res_com_pv_cost import ATBResComPVCostModel
 from h2integrate.converters.solar.atb_utility_pv_cost import ATBUtilityPVCostModel
 from h2integrate.resource.wind.nrel_developer_wtk_api import WTKNRELDeveloperAPIWindResource
-from h2integrate.control.control_rules.converters.wind import PyomoDispatchWind
-from h2integrate.control.control_rules.storage.battery import PyomoDispatchBattery
 from h2integrate.converters.methanol.smr_methanol_plant import (
     SMRMethanolPlantCostModel,
     SMRMethanolPlantFinanceModel,
@@ -52,7 +52,6 @@ from h2integrate.converters.methanol.co2h_methanol_plant import (
     CO2HMethanolPlantFinanceModel,
     CO2HMethanolPlantPerformanceModel,
 )
-from h2integrate.control.control_rules.storage.h2_storage import PyomoDispatchH2Storage
 from h2integrate.converters.natural_gas.natural_gas_cc_ct import (
     NaturalGasCostModel,
     NaturalGasPerformanceModel,
@@ -63,7 +62,12 @@ from h2integrate.control.control_strategies.pyomo_controllers import (
     PyomoControllerH2Storage,
     HeuristicLoadFollowingController,
 )
-from h2integrate.control.control_rules.converters.electrolyzer import PyomoDispatchElectrolyzer
+from h2integrate.resource.solar.nrel_developer_goes_api_models import (
+    GOESTMYSolarAPI,
+    GOESConusSolarAPI,
+    GOESFullDiscSolarAPI,
+    GOESAggregatedSolarAPI,
+)
 from h2integrate.converters.hydrogen.eco_tools_pem_electrolyzer import (
     ECOElectrolyzerPerformanceModel,
 )
@@ -80,6 +84,9 @@ from h2integrate.converters.hydrogen.geologic.natural_geoh2_plant import (
     NaturalGeoH2FinanceModel,
     NaturalGeoH2PerformanceModel,
 )
+from h2integrate.control.control_rules.converters.generic_converter import (
+    PyomoDispatchGenericConverter,
+)
 from h2integrate.converters.co2.marine.ocean_alkalinity_enhancement import (
     OAECostModel,
     OAEPerformanceModel,
@@ -93,12 +100,19 @@ from h2integrate.converters.hydrogen.geologic.stimulated_geoh2_plant import (
     StimulatedGeoH2FinanceModel,
     StimulatedGeoH2PerformanceModel,
 )
+from h2integrate.control.control_rules.storage.pyomo_storage_rule_baseclass import (
+    PyomoRuleStorageBaseclass,
+)
 
 
 supported_models = {
     # Resources
     "river_resource": RiverResource,
     "wind_toolkit_v2_api": WTKNRELDeveloperAPIWindResource,
+    "goes_aggregated_solar_v4_api": GOESAggregatedSolarAPI,
+    "goes_conus_solar_v4_api": GOESConusSolarAPI,
+    "goes_fulldisc_solar_v4_api": GOESFullDiscSolarAPI,
+    "goes_tmy_solar_v4_api": GOESTMYSolarAPI,
     # Converters
     "wind_plant_performance": WindPlantPerformanceModel,
     "wind_plant_cost": WindPlantCostModel,
@@ -148,14 +162,17 @@ supported_models = {
     # Transport
     "cable": CablePerformanceModel,
     "pipe": PipePerformanceModel,
-    "combiner_performance": CombinerPerformanceModel,
-    "splitter_performance": SplitterPerformanceModel,
+    "combiner_performance": GenericCombinerPerformanceModel,
+    "splitter_performance": GenericSplitterPerformanceModel,
+    # Simple Summers
+    "summer": GenericSummerPerformanceModel,
     # Storage
     "pysam_battery": PySAMBatteryPerformanceModel,
     "h2_storage": H2Storage,
     "hydrogen_tank_performance": HydrogenTankPerformanceModel,
     "hydrogen_tank_cost": HydrogenTankCostModel,
     "atb_battery_cost": ATBBatteryCostModel,
+    "generic_storage_cost": GenericStorageCostModel,
     "simple_generic_storage": SimpleGenericStorage,
     # Control
     "pass_through_controller": PassThroughOpenLoopController,
@@ -163,10 +180,8 @@ supported_models = {
     "pyomo_open_loop_controller_h2_storage": PyomoControllerH2Storage,
     "heuristic_load_following_controller": HeuristicLoadFollowingController,
     # Dispatch
-    "pyomo_dispatch_wind": PyomoDispatchWind,
-    "pyomo_dispatch_electrolyzer": PyomoDispatchElectrolyzer,
-    "pyomo_dispatch_h2_storage": PyomoDispatchH2Storage,
-    "pyomo_dispatch_battery": PyomoDispatchBattery,
+    "pyomo_dispatch_generic_converter": PyomoDispatchGenericConverter,
+    "pyomo_dispatch_generic_storage": PyomoRuleStorageBaseclass,
     # Feedstock
     "feedstock_performance": FeedstockPerformanceModel,
     "feedstock_cost": FeedstockCostModel,

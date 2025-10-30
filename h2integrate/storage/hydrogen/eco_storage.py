@@ -18,8 +18,8 @@ from h2integrate.simulation.technologies.hydrogen.h2_storage.lined_rock_cavern.l
 @define
 class H2StorageModelConfig(BaseConfig):
     commodity_name: str = field(default="hydrogen")
-    commodity_rate_units: str = field(default="kg/h")
-    rated_commodity_capacity: float = field(default=640)
+    commodity_units: str = field(default="kg/h")
+    electrolyzer_rating_mw_for_h2_storage_sizing: float | None = field(default=None)
     size_capacity_from_demand: dict = field(default={"flag": True})
     capacity_from_max_on_turbine_storage: bool = field(default=False)
     type: str = field(
@@ -127,6 +127,13 @@ class H2Storage(CostModelBaseClass):
 
         ##################### get storage capacity from hydrogen storage demand
         elif self.config.size_capacity_from_demand["flag"]:
+            if self.config.electrolyzer_rating_mw_for_h2_storage_sizing is None:
+                raise (
+                    ValueError(
+                        "h2 storage input battery_electricity_discharge must be specified \
+                                 if size_capacity_from_demand is True."
+                    )
+                )
             hydrogen_storage_demand = np.mean(
                 inputs["hydrogen_in"]
             )  # TODO: update demand based on end-use needs
@@ -141,7 +148,7 @@ class H2Storage(CostModelBaseClass):
                 hydrogen_storage_soc,
             ) = hydrogen_storage_capacity(
                 results_dict,
-                self.config.rated_commodity_capacity,
+                self.config.electrolyzer_rating_mw_for_h2_storage_sizing,
                 hydrogen_storage_demand,
             )
             h2_storage_capacity_kg = hydrogen_storage_capacity_kg
