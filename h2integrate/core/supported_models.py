@@ -14,7 +14,10 @@ from h2integrate.storage.battery.pysam_battery import PySAMBatteryPerformanceMod
 from h2integrate.transporters.generic_combiner import GenericCombinerPerformanceModel
 from h2integrate.transporters.generic_splitter import GenericSplitterPerformanceModel
 from h2integrate.converters.nitrogen.simple_ASU import SimpleASUCostModel, SimpleASUPerformanceModel
-from h2integrate.storage.simple_generic_storage import SimpleGenericStorage
+from h2integrate.storage.simple_generic_storage import (
+    SimpleGenericStorage,
+    SimpleGenericStoragePyomo,
+)
 from h2integrate.storage.hydrogen.tank_baseclass import (
     HydrogenTankCostModel,
     HydrogenTankPerformanceModel,
@@ -174,6 +177,7 @@ supported_models = {
     "atb_battery_cost": ATBBatteryCostModel,
     "generic_storage_cost": GenericStorageCostModel,
     "simple_generic_storage": SimpleGenericStorage,
+    "simple_generic_storage_pyomo": SimpleGenericStoragePyomo,
     # Control
     "pass_through_controller": PassThroughOpenLoopController,
     "demand_open_loop_controller": DemandOpenLoopController,
