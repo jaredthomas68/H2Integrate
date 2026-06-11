@@ -13,6 +13,16 @@ except ImportError:
     pass
 
 
+def my_demo_function(in1, in2):
+    # step 1
+    stuff = in1 + in2
+    # do some cool step
+
+    # finish
+
+    return stuff
+
+
 def create_xdsm_from_config(config, output_file="connections_xdsm"):
     """
     Create an XDSM diagram from a given plant configuration and save it to a pdf file.
