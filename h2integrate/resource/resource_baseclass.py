@@ -41,8 +41,6 @@ class ResourceBaseAPIConfig(BaseConfig):
             load resource files from. Defaults to "".
         - **resource_filename** (*str*, optional): Filename to save resource data to or load
             resource data from. Defaults to None.
-        - **resource_year_setting** (*str*, optional): How resource years are selected for
-            API datasets. Options include ``start_year``, ``year_order``, and ``filenames``.
         - **valid_intervals** (*list[int]*): time interval(s) in minutes that resource data can be
             downloaded in.
 

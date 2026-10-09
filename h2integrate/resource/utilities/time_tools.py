@@ -338,11 +338,13 @@ def resample_resource_data_to_dt(
         data (dict): resource data dictionary with timeseries arrays and time columns.
         target_dt (int | float): desired simulation timestep in seconds.
         upsample_method (str | None): interpolation method passed to
-            :meth:`pandas.DataFrame.interpolate` when upsampling. Must be explicitly set when
-            upsampling is needed; otherwise a ``ValueError`` is raised.
+            :meth:`pandas.DataFrame.interpolate` when upsampling. No default; when upsampling
+            is required this must be set (for example ``"time"``) or a ``ValueError`` is
+            raised, so resampling never happens automatically.
         downsample_method (str | None): aggregation passed to
-            :meth:`pandas.core.resample.Resampler.agg` when downsampling. Must be explicitly
-            set when downsampling is needed; otherwise a ``ValueError`` is raised.
+            :meth:`pandas.core.resample.Resampler.agg` when downsampling. No default; when
+            downsampling is required this must be set (for example ``"mean"``) or a
+            ``ValueError`` is raised, so resampling never happens automatically.
 
     Returns:
         dict: resource data resampled to ``target_dt``.
