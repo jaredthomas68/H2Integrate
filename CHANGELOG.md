@@ -59,6 +59,7 @@
 - Updates to all GH Actions, pre-commit, isort, and ruff versioning. [PR 904](https://github.com/NatLabRockies/H2Integrate/pull/904)
 - Update API resource models to be able to be able to handle nonannual simulations. [PR 897](https://github.com/NatLabRockies/H2Integrate/pull/897)
 - Move PySAM model instantiation for wind and solar performance models to the `compute()` method, and validate recalculated wind power curves. [PR 909](https://github.com/NatLabRockies/H2Integrate/pull/909)
+- Added `load_profast_from_config` to rebuild and re-run a ProFAST object from a config saved with `save_profast_config`, added `save_profast_config` support to `ProFastNPV` (including the sell price profile), and made saved ProFAST file names include the finance subgroup and finance group names. [PR TBD](https://github.com/NatLabRockies/H2Integrate/pull/TBD)
 
 ## 0.9 [August 10, 2026]
 
