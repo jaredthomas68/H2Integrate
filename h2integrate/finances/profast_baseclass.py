@@ -13,6 +13,7 @@ from h2integrate.tools.profast_tools import (
     create_years_of_operation,
     create_and_populate_profast,
 )
+from h2integrate.core.model_baseclass import SkippableComputeMixin
 from h2integrate.core.inputs.validation import write_yaml
 
 
@@ -461,7 +462,7 @@ class ProFASTDefaultIncentive(BaseConfig):
         return self.as_dict()
 
 
-class ProFastBase(om.ExplicitComponent):
+class ProFastBase(SkippableComputeMixin, om.ExplicitComponent):
     """
     Base component for using the ProFAST financial model within OpenMDAO.
 
@@ -504,8 +505,11 @@ class ProFastBase(om.ExplicitComponent):
             is replaced in each year of the plant life.
     """
 
+    _is_steppable = False
+
     def initialize(self):
         """Declare OpenMDAO component options."""
+        super().initialize()
         self.options.declare("driver_config", types=dict)
         self.options.declare("plant_config", types=dict)
         self.options.declare("tech_config", types=dict)
