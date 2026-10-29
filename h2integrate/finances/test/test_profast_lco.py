@@ -88,6 +88,37 @@ def test_profast_params_config(profast_inputs_no1, subtests):
         assert pf_params["maintenance"]["escalation"] == 0.02
 
 
+@pytest.mark.unit
+def test_profast_setup_without_simulation(
+    profast_inputs_no1: dict, fake_filtered_tech_config: dict
+) -> None:
+    """Allow standalone annual finance inputs without timestep configuration."""
+    problem = om.Problem(reports=False)
+    plant_config = {
+        "plant": {"plant_life": 30},
+        "finance_parameters": {"model_inputs": profast_inputs_no1},
+    }
+    finance_model = ProFastLCO(
+        driver_config={},
+        plant_config=plant_config,
+        tech_config=fake_filtered_tech_config,
+        commodity_type="electricity",
+    )
+    independent = om.IndepVarComp()
+    independent.add_output("rated_electricity_production", 500000.0, units="kW")
+    independent.add_output("capacity_factor", val=1.0, shape=30, units="unitless")
+    problem.model.add_subsystem("ivc", independent, promotes=["*"])
+    problem.model.add_subsystem(
+        "finance",
+        finance_model,
+        promotes_inputs=["rated_electricity_production", "capacity_factor"],
+    )
+
+    problem.setup()
+
+    assert finance_model.params.plant_life == 30
+
+
 @pytest.mark.regression
 def test_profast_comp(profast_inputs_no1, fake_filtered_tech_config, fake_cost_dict, subtests):
     mean_hourly_production = 500000.0
@@ -356,6 +387,57 @@ def test_profast_comp_sales_tax(
 
     with subtests.test("LCOH breakdown total"):
         assert pytest.approx(lcoh_breakdown["LCOH: Total ($/kg*h/s)"] / 3600, rel=1e-6) == lcoh
+
+
+@pytest.mark.regression
+def test_profast_comp_sales_tax_different_units(
+    profast_inputs_no1, fake_filtered_tech_config, fake_cost_dict, subtests
+):
+    # this is the same as test_profast_comp_sales_tax but sets the rated_hydrogen_production
+    # in units of kg/h (instead of kg/s). This ensures that the ProFAST LCO model properly handles
+    # different rate units (LCOH should not change for different rate units)
+    profast_inputs_no1["params"]["sales_tax_rate"] = 0.07
+    mean_hourly_production = 500000.0
+    prob = om.Problem()
+    plant_config = {
+        "plant": {
+            "plant_life": 30,
+        },
+        "finance_parameters": {"model_inputs": profast_inputs_no1},
+    }
+    pf = ProFastLCO(
+        driver_config={},
+        plant_config=plant_config,
+        tech_config=fake_filtered_tech_config,
+        commodity_type="hydrogen",
+        description="no1",
+    )
+    ivc = om.IndepVarComp()
+
+    ivc.add_output("rated_hydrogen_production", mean_hourly_production, units="kg/h")
+    ivc.add_output("capacity_factor", [0.5] * plant_config["plant"]["plant_life"], units="unitless")
+
+    prob.model.add_subsystem("ivc", ivc, promotes=["*"])
+    prob.model.add_subsystem("pf", pf, promotes=["rated_hydrogen_production", "capacity_factor"])
+    prob.setup()
+    for variable, cost in fake_cost_dict.items():
+        units = "USD" if "capex" in variable else "USD/year"
+        prob.set_val(f"pf.{variable}", cost, units=units)
+
+    prob.run_model()
+
+    lcoh = prob.get_val("pf.LCOH_no1", units="USD/kg")
+    price = prob.get_val("pf.price_hydrogen_no1", units="USD/kg")
+    lcoh_breakdown = prob.get_val("pf.LCOH_no1_breakdown")
+
+    with subtests.test("LCOH"):
+        assert pytest.approx(lcoh[0], rel=1e-6) == 0.13724339329249208
+
+    with subtests.test("LCOH == price"):
+        assert pytest.approx(lcoh, rel=1e-6) == price
+
+    with subtests.test("LCOH breakdown total"):
+        assert pytest.approx(lcoh_breakdown["LCOH: Total ($/kg)"], rel=1e-6) == lcoh
 
 
 @pytest.mark.regression
