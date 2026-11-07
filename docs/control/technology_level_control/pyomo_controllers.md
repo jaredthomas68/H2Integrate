@@ -62,6 +62,33 @@ display(
 
 The Pyomo control framework currently supports both a simple heuristic method and an optimized dispatch method for load following control.
 
+## Controller and rule APIs
+
+| Controller or rule | Configuration |
+|---|---|
+| {py:class}`~h2integrate.control.control_strategies.storage.heuristic_pyomo_controller.HeuristicLoadFollowingStorageController` | {py:class}`~h2integrate.control.control_strategies.storage.heuristic_pyomo_controller.HeuristicLoadFollowingStorageControllerConfig` |
+| {py:class}`~h2integrate.control.control_strategies.storage.optimized_pyomo_controller.OptimizedDispatchStorageController` | {py:class}`~h2integrate.control.control_strategies.storage.optimized_pyomo_controller.OptimizedDispatchStorageControllerConfig` |
+| {py:class}`~h2integrate.control.control_strategies.storage.plm_optimized_storage_controller.PeakLoadManagementOptimizedStorageController` | {py:class}`~h2integrate.control.control_strategies.storage.plm_optimized_storage_controller.PeakLoadManagementOptimizedStorageControllerConfig` |
+| {py:class}`~h2integrate.control.control_rules.converters.generic_converter.PyomoDispatchGenericConverter` | {py:class}`~h2integrate.control.control_rules.converters.generic_converter.PyomoDispatchGenericConverterConfig` |
+| {py:class}`~h2integrate.control.control_rules.storage.pyomo_storage_rule_baseclass.PyomoRuleStorageBaseclass` | {py:class}`~h2integrate.control.control_rules.storage.pyomo_storage_rule_baseclass.PyomoRuleStorageBaseclassConfig` |
+| {py:class}`~h2integrate.control.control_rules.converters.generic_converter_min_operating_cost.PyomoDispatchGenericConverterMinOperatingCosts` | Constructed internally by optimized dispatch |
+| {py:class}`~h2integrate.control.control_rules.storage.pyomo_storage_rule_min_operating_cost.PyomoRuleStorageMinOperatingCosts` | Constructed internally by optimized dispatch |
+
+Storage controllers use commodity inflow and set-point profiles, configured storage limits, and
+controller-specific forecasts or costs to construct a dispatch callable. The storage performance
+model executes the callable and reports storage and commodity results. The heuristic rule
+components expose Pyomo block-rule functions; the optimized load-following rules are constructed
+internally and do not have separate YAML configuration classes.
+
+The storage controllers inherit common parameters from
+{py:class}`~h2integrate.control.control_strategies.pyomo_storage_controller_baseclass.PyomoStorageControllerBaseConfig`:
+
+```{eval-rst}
+.. autoclass:: h2integrate.control.control_strategies.pyomo_storage_controller_baseclass.PyomoStorageControllerBaseConfig
+   :no-members:
+   :no-index:
+```
+
 (heuristic-load-following-controller)=
 ## Heuristic Load Following Controller
 
@@ -77,7 +104,20 @@ The optimized dispatch method is specified by setting the storage control to  `O
 
 The optimized dispatch using Pyomo is implemented differently than the heuristic dispatch in order to be able to properly aggregate the individual Pyomo technology models into a cohesive Pyomo plant model for the optimization solver. The Pyomo plant model is from the perspective of the storage technology and is meant to track inflows of commodities and other parameters that might impact the dispatch of the storage from upstream technologies. Practically, this means that the Pyomo elements of the dispatch (including the individual technology models and the plant model) are not exposed to the main H2I code flow, and do not appear in the N2 diagram. The figure below shows a flow diagram of how the dispatch is implemented. The green blocks below represent what is represented in the N2 diagram of the system. The dispatch routine is currently self-contained within the storage technology of the system, though it includes solving an aggregated plant model in the optimization
 
-```{note} Only the PySAM battery performance model can call Pyomo dispatch at this time.
+```{note}
+Optimized dispatch passes a `pyomo_dispatch_solver` callable to a storage performance model.
+`StoragePerformanceBase` provides this interface, so optimized dispatch is not inherently limited
+to the PySAM battery. To confirm that a storage model works with optimized dispatch:
+
+- Check that the storage `performance_model` is derived from `StoragePerformanceBase`; the models
+  listed in the [Storage Models](../../storage/storage_models_index.md) page are valid.
+- Check that `tech_to_dispatch_connections` in `plant_config.yaml` lists the storage technology as the
+  dispatching technology, for example `[battery, battery]`. Only then does the storage model add the
+  `pyomo_dispatch_solver` input and run with feedback control.
+- Check that the controller `commodity` matches the storage model `commodity`.
+
+[Example 30](https://github.com/NatLabRockies/H2Integrate/tree/develop/examples/30_pyomo_optimized_dispatch)
+uses `PySAMBatteryPerformanceModel`.
 ```
 
 ![](./figures/Pyomo_dispatch_figure.png)
@@ -93,7 +133,25 @@ We have exposed the optimization cost (weighting) values to the user in this imp
 ```
 
 For an example of how to use the optimized Pyomo control framework with the `OptimizedDispatchStorageController`, see
-- `examples/30_pyomo_optimized_dispatch`
+- [Example 30: Optimized Pyomo Dispatch](https://github.com/NatLabRockies/H2Integrate/tree/develop/examples/30_pyomo_optimized_dispatch)
+
+### Minimum operating-cost rules
+
+The optimized controller creates `PyomoDispatchGenericConverterMinOperatingCosts` blocks for
+upstream converter technologies and a `PyomoRuleStorageMinOperatingCosts` block for the dispatching
+storage technology. These registered Pyomo rule classes define the per-technology variables and
+constraints used by the controller; the optimized controller constructs them internally rather than
+requiring them to be added as performance models.
+
+```{eval-rst}
+.. autoclass:: h2integrate.control.control_rules.converters.generic_converter_min_operating_cost.PyomoDispatchGenericConverterMinOperatingCosts
+  :members: initialize_parameters
+  :no-index:
+
+.. autoclass:: h2integrate.control.control_rules.storage.pyomo_storage_rule_min_operating_cost.PyomoRuleStorageMinOperatingCosts
+  :members: initialize_parameters
+  :no-index:
+```
 
 
 This controller only allows one incoming electricity stream and does not apply optimal dispatch of that stream back through the upstream technologies (no feedback). The dispatch can handle more than one generation technology, but the incoming electricity must be combined using an H2I combiner before going to the storage component, and the `cost_per_production`, which is defined in the storage technology section, needs to include the cost of production for all production technologies. This could be done using the following:
@@ -124,6 +182,14 @@ Set `control_strategy` to `PeakLoadManagementOptimizedStorageController` to use 
 Given a price signal (`lmp_signal`) and the local party's demand (`demand_signal`), the controller picks a dispatch schedule that earns as much incentive revenue as possible while keeping the local party's cost low, without exceeding the monthly dispatch limit or the battery's state-of-charge limits.
 
 The controller works at any simulation timestep resolution (`dt`). All time-based parameters ( `event_duration`, `min_peak_separation`) are specified in physical time units (hours, minutes, etc.) and are internally converted to timesteps using `dt`.
+
+The controller's configuration is:
+
+```{eval-rst}
+.. autoclass:: h2integrate.control.control_strategies.storage.plm_optimized_storage_controller.PeakLoadManagementOptimizedStorageControllerConfig
+   :no-members:
+   :no-index:
+```
 
 ### Definitions
 

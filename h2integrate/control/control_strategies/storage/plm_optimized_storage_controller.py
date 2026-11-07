@@ -22,6 +22,9 @@ from h2integrate.control.control_strategies.pyomo_storage_controller_baseclass i
 class PeakLoadManagementOptimizedStorageControllerConfig(PyomoStorageControllerBaseConfig):
     """Configuration for the Peak Load Management optimized storage controller.
 
+    See :class:`PeakLoadManagementOptimizedStorageController` and
+    :doc:`/control/technology_level_control/pyomo_controllers`.
+
     Inherits base fields from ``PyomoStorageControllerBaseConfig``:
     ``max_capacity``, ``max_soc_fraction``, ``min_soc_fraction``,
     ``init_soc_fraction``, ``n_control_window_hours``, ``commodity``,
@@ -256,6 +259,9 @@ class PeakLoadManagementOptimizedStorageControllerConfig(PyomoStorageControllerB
 @register
 class PeakLoadManagementOptimizedStorageController(PyomoStorageControllerBaseClass):
     """Demand-response storage controller using a rolling-horizon MILP.
+
+    See :class:`PeakLoadManagementOptimizedStorageControllerConfig` and
+    :doc:`/control/technology_level_control/pyomo_controllers`.
 
     Each call to the dispatch solver iterates over the full simulation in
     windows of length ``n_control_window_hours``. For each window it builds
@@ -565,6 +571,7 @@ class PeakLoadManagementOptimizedStorageController(PyomoStorageControllerBaseCla
                     self._get_storage_dispatch_commands(),
                     **performance_model_kwargs,
                     sim_start_index=window_start,
+                    sim_end_index=window_start + window_len,
                 )
 
                 # Performance model returns SOC in percent.

@@ -50,6 +50,7 @@ class StoragePerformanceModelConfig(StoragePerformanceBaseConfig):
             81% efficiency). Optional if `charge_efficiency` and `discharge_efficiency` are
             provided.
 
+    See :class:`StoragePerformanceModel` and :doc:`/storage/simple_generic_storage`.
     """
 
     commodity: str = field()
@@ -124,12 +125,18 @@ class StoragePerformanceModelConfig(StoragePerformanceBaseConfig):
 
 @register
 class StoragePerformanceModel(StoragePerformanceBase):
-    """OpenMDAO component for a storage component."""
+    """OpenMDAO component for a storage component.
+
+    See :class:`StoragePerformanceModelConfig` and :doc:`/storage/simple_generic_storage` for
+    configuration, controls, inputs, and outputs.
+    """
 
     _time_step_bounds = (
         1,
         3600,
     )  # (min, max) time step lengths (in seconds) compatible with this model
+
+    _is_steppable = True
 
     def setup(self):
         self.config = StoragePerformanceModelConfig.from_dict(
@@ -160,14 +167,16 @@ class StoragePerformanceModel(StoragePerformanceBase):
 
     def compute(self, inputs, outputs, discrete_inputs=[], discrete_outputs=[]):
         """Run the storage performance model."""
-        self.current_soc = self.config.init_soc_fraction
 
+        # Unpack scalar inputs
         charge_rate = inputs["max_charge_rate"][0]
+
         if "max_discharge_rate" in inputs:
             discharge_rate = inputs["max_discharge_rate"][0]
         else:
             discharge_rate = inputs["max_charge_rate"][0]
         storage_capacity = inputs["storage_capacity"][0]
+
         outputs = self.run_storage(
             charge_rate, discharge_rate, storage_capacity, inputs, outputs, discrete_inputs
         )

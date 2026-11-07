@@ -58,6 +58,34 @@ automatically and generate the model's input template. If a model intentionally
 shares a base config or requires a specialized config name, document that
 relationship and ensure the model's own setup path remains unambiguous.
 
+### Documenting a model
+
+Add a user guide page for the model, link it from the table of contents, and link from it to
+each relevant model and configuration API entry using `{py:class}`. Embed configuration class
+documentation with an `autoclass` directive, `:no-index:`, and `:no-members:` rather than
+maintaining a separate list of configuration fields and defaults in the guide. The last option
+overrides the book's default member discovery, which would otherwise repeat attrs fields or
+include undocumented members. For pages covering many models, a table linking each model and
+configuration can be more useful than embedding every configuration. Link to model APIs rather
+than embedding their methods unless specific methods are useful in the guide.
+
+Document configuration fields in the configuration docstring. For inherited constructor
+parameters, link to or embed the base configuration so readers can find their descriptions
+without duplicating them. Use Python cross-reference roles such as `:class:` and `:attr:` in
+docstrings, or double backticks for literal identifiers; in MyST pages use `{py:class}` and
+`{py:attr}` or inline code.
+If a directive intentionally includes members, `:inherited-members: BaseClass` excludes members
+inherited from the named base; use `:no-undoc-members:` to override the book's default or
+`:exclude-members:` for specific duplicate fields. Check the rendered output and follow links in
+both directions.
+
+Explain the model's capabilities and limitations, usage, OpenMDAO inputs and outputs (including
+units and inherited variables), and any supported time-step or control restrictions. Distinguish
+configuration values from similarly named OpenMDAO inputs if the model uses them differently.
+Add reciprocal `:class:` and `:doc:` links to the model and configuration docstrings so API
+readers can find the related reference and guide. See the
+[reverse osmosis guide](../technology_models/desalination.md) for an example.
+
 ```{note}
 `setup` is where the configuration object is built and where any additional I/O is registered. Always call `super().setup()` first so that the baseclass can register the standard production outputs (and, for flexible models, the command-value input). The `compute` signature is
 `compute(self, inputs, outputs, discrete_inputs, discrete_outputs)` because performance models may use discrete I/O (e.g. resource data dictionaries).
@@ -80,6 +108,10 @@ from h2integrate.core.model_baseclass import PerformanceModelBaseClass
 class SolarPerformanceClass(PerformanceModelBaseClass):
     # (min, max) time step lengths (in seconds) compatible with this model
     _time_step_bounds = (3600, 3600)
+    # (min, max) simulation duration (in years) supported by this model.
+    # Defaults to annual-only (1.0, 1.0) on the baseclass; override to allow
+    # sub-annual or multi-year simulations.
+    _simulation_duration_bounds = (1.0, 1.0)
     # System-level control classifier; see the control classifier docs.
     _control_classifier = "flexible"
 
@@ -142,6 +174,11 @@ class SolarPerformanceClass(PerformanceModelBaseClass):
 Every model must define the following class attributes. These are typically set on the category baseclass so that all subclasses inherit them, but they can also be set or overridden on individual model classes.
 
 - `_time_step_bounds` (tuple[int, int]): `(min, max)` simulation time-step lengths (in seconds) the model can run at. Use `(3600, 3600)` for hourly-only models and a wider range (e.g. `(300, 3600)`) for models that support sub-hourly time steps. The plant simulation `dt` must lie within every model's bounds.
+- `_simulation_duration_bounds` (tuple[float, float]): `(min, max)` simulation durations (in 365-day years) the model can run over. Defaults to `(1.0, 1.0)` (annual-only) on the core baseclasses; override it (e.g. `(0.0, float("inf"))`) for models that support sub-annual or multi-year simulations. The configured duration in years must lie within every selected model's bounds, including technology-specific finance models.
+
+Widen bounds only after verifying the model at the additional timesteps or horizons. See the
+{ref}`simulation settings <plant-simulation-settings>` for year and horizon rules, and
+{ref}`annualization guidance <annualization-methods>` for the base-class helpers.
 
 Performance models must also define the following class attributes:
 - `commodity` (str), `commodity_rate_units` (str), `commodity_amount_units` (str): set in `initialize()` (or before calling `super().setup()`). These define the commodity produced by the model and the units used for its rate (e.g. `"kW"`, `"kg/h"`) and cumulative amount (e.g. `"kW*h"`, `"kg"`). `PerformanceModelBaseClass.setup()` uses them to register all of the standard outputs and will raise `NotImplementedError` if any are missing.
@@ -196,6 +233,13 @@ The model is registered under its class name, which is the name used in YAML and
 
 ```{important}
 The registry finds models by scanning the source as text, so each model's module is only imported when the model is used. Put `@register` directly above the `class` definition line.
+```
+
+```{note}
+Package `__init__.py` files must not import model modules eagerly: importing one model's module would then import every sibling (and their heavy dependencies such as Ard, rex, or Pyomo) before the model is even used.
+Packages using `lazy_exports` automatically expose their registered models by class name (for example, `from h2integrate.converters.wind import ArdWindPlantModel`), importing the defining submodule only on first access.
+Non-model exports must be passed explicitly as a name-to-submodule mapping to `lazy_exports`.
+Likewise, import expensive libraries inside the function that needs them unless the model always needs them.
 ```
 
 ## More complex cases
