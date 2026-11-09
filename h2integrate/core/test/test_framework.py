@@ -1,4 +1,3 @@
-import os
 import shutil
 from copy import deepcopy
 from pathlib import Path
@@ -7,6 +6,8 @@ from unittest.mock import patch
 import yaml
 import numpy as np
 import pytest
+import openmdao.api as om
+from jsonschema import ValidationError
 
 import h2integrate.postprocess.reporting as reporting_module
 import h2integrate.core.h2integrate_model as h2i_model_module
@@ -18,7 +19,13 @@ from h2integrate import (
     load_plant_yaml,
     load_driver_yaml,
 )
-from h2integrate.core.model_checks import check_model_time_step, check_model_control_classifier
+from h2integrate.core.model_checks import (
+    check_model_time_step,
+    check_model_is_steppable,
+    check_time_marching_config,
+    check_model_control_classifier,
+    check_model_simulation_duration,
+)
 from h2integrate.core.connection_utils import (
     create_technology_graph,
     check_dispatch_connections,
@@ -63,8 +70,9 @@ def test_combiner_naming_dependency(temp_copy_of_example):
     combiner_tech_names = [
         k
         for k, v in tech_config["technologies"].items()
-        if v.get("performance_model", "model") == "GenericCombinerPerformanceModel"
+        if v.get("performance_model", {}).get("model") == "GenericCombinerPerformanceModel"
     ]
+    assert combiner_tech_names
     combiner_tech_renames = {k: k.replace("combiner", "unnamed") for k in combiner_tech_names}
 
     # rename combiners in technology_interconnections
@@ -113,6 +121,12 @@ def test_combiner_naming_dependency(temp_copy_of_example):
     h2i = H2IntegrateModel(top_level_config)
     h2i.setup()
     h2i.run()
+    for original, renamed in combiner_tech_renames.items():
+        inputs = tech_config["technologies"][original]["model_inputs"]
+        commodity = (
+            inputs.get("performance_parameters", {}) | inputs.get("shared_parameters", {})
+        )["commodity"]
+        assert np.any(h2i.prob.get_val(f"{renamed}.{commodity}_out") > 0)
 
 
 @pytest.mark.integration
@@ -797,120 +811,115 @@ def test_custom_model_name_clash(temp_dir, subtests):
         with pytest.raises(ValueError, match=error_msg):
             H2IntegrateModel(temp_highlevel_yaml)
 
-    with subtests.test(
-        "custom models must use different model names for different class definitions"
-    ):
-        # Load the tech_config YAML content
-        tech_config_data = load_tech_yaml(temp_tech_config)
-
-        tech_config_data["technologies"]["electrolyzer"]["cost_model"] = {
-            "model": "DummyClass",
-            "model_location": "dummy_path",  # path doesn't matter; `model_location` must exist
-        }
-
-        tech_config_data["technologies"]["electrolyzer2"] = deepcopy(
-            tech_config_data["technologies"]["electrolyzer"]
-        )
-        tech_config_data["technologies"]["electrolyzer2"]["cost_model"] = {
-            "model": "DummyClass",
-            "model_location": "dummy_path",  # path doesn't matter; `model_location` must exist
-        }
-        # Save the modified tech_config YAML back
-        with temp_tech_config.open("w") as f:
-            yaml.safe_dump(tech_config_data, f)
-
-        # Load the high-level YAML content
-        with temp_highlevel_yaml.open() as f:
-            highlevel_data = yaml.safe_load(f)
-
-        # Modify the high-level YAML to point to the temp tech_config file
-        highlevel_data["technology_config"] = str(temp_tech_config.name)
-
-        # Save the modified high-level YAML back
-        with temp_highlevel_yaml.open("w") as f:
-            yaml.safe_dump(highlevel_data, f)
-
-        # Assert that a ValueError is raised with the expected message when running the model
-        error_msg = (
-            r"User has specified two custom models using the same model"
-            r"name ('new_electrolyzer_cost'), but with different model classes\. "
-            r"Technologies defined with different"
-            r"classes must have different technology names\."
-        )
-
 
 @pytest.mark.unit
 def test_custom_financial_model_grouping(temp_dir, subtests):
-    orig_tech_config = EXAMPLE_DIR / "01_onshore_steel_mn" / "tech_config.yaml"
+    example_dir = EXAMPLE_DIR / "01_onshore_steel_mn"
     temp_tech_config = temp_dir / "temp_tech_config.yaml"
-    orig_highlevel_yaml = EXAMPLE_DIR / "01_onshore_steel_mn" / "01_onshore_steel_mn.yaml"
     temp_highlevel_yaml = temp_dir / "temp_01_onshore_steel_mn.yaml"
 
-    driver_config = load_driver_yaml(EXAMPLE_DIR / "01_onshore_steel_mn" / "driver_config.yaml")
-    plant_config = load_plant_yaml(EXAMPLE_DIR / "01_onshore_steel_mn" / "plant_config.yaml")
+    shutil.copy(example_dir / "tech_config.yaml", temp_tech_config)
+    shutil.copy(example_dir / "01_onshore_steel_mn.yaml", temp_highlevel_yaml)
 
-    # Copy the original tech_config.yaml and high-level yaml to temp files
-    shutil.copy(orig_tech_config, temp_tech_config)
-    shutil.copy(orig_highlevel_yaml, temp_highlevel_yaml)
-
-    # Load the tech_config YAML content
     tech_config_data = load_tech_yaml(temp_tech_config)
-
-    # Modify the financial_model entry for one of the technologies
     tech_config_data["technologies"]["steel"]["finance_model"]["group"] = "test_financial_group"
     tech_config_data["technologies"]["electrolyzer"].pop("financial_model", None)
-
-    # Save the modified tech_config YAML back
     with temp_tech_config.open("w") as f:
         yaml.safe_dump(tech_config_data, f)
 
-    # Load the high-level YAML content
     with temp_highlevel_yaml.open() as f:
         highlevel_data = yaml.safe_load(f)
-        highlevel_data["driver_config"] = driver_config
-        highlevel_data["plant_config"] = plant_config
-
-    # Modify the high-level YAML to point to the temp tech_config file
+    highlevel_data["driver_config"] = load_driver_yaml(example_dir / "driver_config.yaml")
+    highlevel_data["plant_config"] = load_plant_yaml(example_dir / "plant_config.yaml")
     highlevel_data["technology_config"] = str(temp_tech_config)
-
-    # Save the modified high-level YAML back
     with temp_highlevel_yaml.open("w") as f:
         yaml.safe_dump(highlevel_data, f)
 
-    # Run the model and check that it does not raise an error
-    # (assuming custom financial_model is allowed)
-    H2IntegrateModel(temp_highlevel_yaml)
+    model = H2IntegrateModel(temp_highlevel_yaml)
+
+    with subtests.test("steel finance subgroup uses its technology-specific finance model"):
+        steel_subgroup = model.finance_subgroups["steel"]
+        assert steel_subgroup["is_system_finance_model"] is False
+        assert "steel" in steel_subgroup["tech_configs"]
 
 
 # docs fencepost start: DO NOT REMOVE
 @pytest.mark.unit
-def test_unsupported_simulation_parameters(temp_dir):
+def test_unsupported_simulation_parameters():
     orig_plant_config = EXAMPLE_DIR / "01_onshore_steel_mn" / "plant_config.yaml"
-    temp_plant_config_ntimesteps = temp_dir / "temp_plant_config_ntimesteps.yaml"
-    temp_plant_config_dt = temp_dir / "temp_plant_config_dt.yaml"
-
-    shutil.copy(orig_plant_config, temp_plant_config_ntimesteps)
-    shutil.copy(orig_plant_config, temp_plant_config_dt)
-
-    # Load the plant_config YAML content
-    plant_config_data_ntimesteps = load_plant_yaml(temp_plant_config_ntimesteps)
-    plant_config_data_dt = load_plant_yaml(temp_plant_config_dt)
+    plant_config_data_ntimesteps = load_plant_yaml(orig_plant_config)
+    plant_config_data_dt = deepcopy(plant_config_data_ntimesteps)
     # docs fencepost end: DO NOT REMOVE
 
-    # Modify the n_timesteps entry for the temp_plant_config_ntimesteps
-    plant_config_data_ntimesteps["plant"]["simulation"]["n_timesteps"] = 8759
-    # Modify the dt entry for the temp_plant_config_dt
-    plant_config_data_dt["plant"]["simulation"]["dt"] = 3601
+    plant_life = int(plant_config_data_ntimesteps["plant"]["plant_life"])
 
-    # Save the modified plant_configs YAML back
-    with temp_plant_config_ntimesteps.open("w") as f:
-        yaml.safe_dump(plant_config_data_ntimesteps, f)
-    with temp_plant_config_dt.open("w") as f:
-        yaml.safe_dump(plant_config_data_dt, f)
+    # Sub-year and multi-year horizons are supported when positive and within plant life.
+    plant_config_data_ntimesteps["plant"]["simulation"]["n_timesteps"] = 4380  # 0.5 year at 1 h
+    load_plant_yaml(plant_config_data_ntimesteps)
 
-    # check that error is thrown when loading config with invalid number of timesteps
-    with pytest.raises(ValueError, match="greater than 1-year"):
-        load_plant_yaml(plant_config_data_ntimesteps)
+    # A two-year hourly horizon should also load without error.
+    plant_config_data_dt["plant"]["simulation"]["n_timesteps"] = 2 * 8760
+    load_plant_yaml(plant_config_data_dt)
+
+    # A horizon longer than the plant life is not supported and must raise.
+    over_life = deepcopy(plant_config_data_dt)
+    over_life["plant"]["simulation"]["n_timesteps"] = (plant_life + 1) * 8760
+    with pytest.raises(ValueError, match="longer than the plant"):
+        load_plant_yaml(over_life)
+
+    # A non-positive horizon is invalid and must raise.
+    non_positive = deepcopy(plant_config_data_dt)
+    non_positive["plant"]["simulation"]["dt"] = 0
+    with pytest.raises(ValueError, match="dt must be finite and greater than zero"):
+        load_plant_yaml(non_positive)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "attribute,value,expected_error,expected_message",
+    [
+        ("dt", 0, ValueError, r"^dt must be finite and greater than zero\.$"),
+        ("dt", np.inf, ValueError, r"^dt must be finite and greater than zero\.$"),
+        ("dt", -1, ValueError, r"^dt must be finite and greater than zero\.$"),
+        ("plant_life", 0, ValidationError, r"^0 is less than the minimum of 1"),
+        (
+            "plant_life",
+            1.5,
+            ValueError,
+            r"^plant_life must be a positive integer number of years\.$",
+        ),
+        (
+            "plant_life",
+            np.nan,
+            ValueError,
+            r"^plant_life must be a positive integer number of years\.$",
+        ),
+    ],
+)
+def test_plant_validation_rejects_invalid_clock(
+    attribute: str,
+    value: float,
+    expected_error: type[Exception],
+    expected_message: str,
+) -> None:
+    plant_config = {
+        "plant": {
+            "plant_life": 3,
+            "simulation": {"dt": 3600, "n_timesteps": 1},
+        }
+    }
+    if attribute == "plant_life":
+        plant_config["plant"][attribute] = value
+    else:
+        plant_config["plant"]["simulation"][attribute] = value
+
+    with pytest.raises(expected_error, match=expected_message) as exc_info:
+        load_plant_yaml(plant_config)
+
+    if expected_error is ValidationError:
+        assert exc_info.value.validator == "minimum"
+        assert exc_info.value.validator_value == 1
+        assert list(exc_info.value.absolute_path) == ["plant", "plant_life"]
 
 
 @pytest.mark.unit
@@ -956,6 +965,221 @@ def test_check_control_classifier_accepts_classified_model():
         _control_classifier = "dispatchable"
 
     check_model_control_classifier("ClassifiedModel", ClassifiedModel, True)
+
+
+@pytest.mark.unit
+def test_check_simulation_duration_defaults_to_annual_only():
+    class DummyModel:
+        pass
+
+    # Exactly one year (8760 h at 1 h steps) is allowed by default.
+    check_model_simulation_duration("DummyModel", DummyModel, 8760, 3600)
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"Model DummyModel is compatible with simulation durations between "
+            r"1.0 and 1.0 years, but a simulation duration of 2 years"
+        ),
+    ):
+        check_model_simulation_duration("DummyModel", DummyModel, 2 * 8760, 3600)
+
+
+@pytest.mark.unit
+def test_check_simulation_duration_respects_model_bounds():
+    class MultiYearModel:
+        # (min, max) permitted simulation duration in years
+        _simulation_duration_bounds = (0.0, 5.0)
+
+    # Half a year and two years are both within the model's supported range.
+    check_model_simulation_duration("MultiYearModel", MultiYearModel, 4380, 3600)
+    check_model_simulation_duration("MultiYearModel", MultiYearModel, 2 * 8760, 3600)
+
+    with pytest.raises(
+        ValueError,
+        match=r"compatible with simulation durations between 0.0 and 5.0 years",
+    ):
+        check_model_simulation_duration("MultiYearModel", MultiYearModel, 6 * 8760, 3600)
+
+
+@pytest.mark.unit
+def test_system_level_controller_defaults_to_annual_only_duration():
+    class AnnualOnlyController:
+        def __init__(self, **kwargs):
+            raise AssertionError("controller should not be constructed for an unsupported duration")
+
+    model = object.__new__(H2IntegrateModel)
+    model.plant_config = {
+        "plant": {
+            "plant_life": 3,
+            "simulation": {"n_timesteps": 2 * 8760, "dt": 3600},
+        },
+        "system_level_control": {"control_strategy": "AnnualOnlyController"},
+    }
+    model.supported_models = {"AnnualOnlyController": AnnualOnlyController}
+
+    with pytest.raises(ValueError, match=r"Model AnnualOnlyController.*simulation durations"):
+        model.add_system_level_controller({})
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "duration_bounds,n_timesteps,is_supported",
+    [
+        (None, 4380, False),
+        ((1.0, 1.0), 4380, False),
+        ((0.0, 5.0), 4380, True),
+        ((1.0, 1.0), 8760, True),
+    ],
+)
+def test_technology_finance_checks_simulation_duration(
+    monkeypatch: pytest.MonkeyPatch,
+    duration_bounds: tuple[float, float] | None,
+    n_timesteps: int,
+    is_supported: bool,
+) -> None:
+    """Enforce technology-finance duration bounds before creating its component."""
+
+    class FinanceModel(om.ExplicitComponent):
+        """Minimal finance component for checking framework duration validation."""
+
+        def initialize(self) -> None:
+            """Declare the configuration options passed by the framework."""
+            self.options.declare("driver_config", types=dict)
+            self.options.declare("plant_config", types=dict)
+            self.options.declare("tech_config", types=dict)
+
+    if duration_bounds is not None:
+        monkeypatch.setattr(
+            FinanceModel, "_simulation_duration_bounds", duration_bounds, raising=False
+        )
+
+    model = object.__new__(H2IntegrateModel)
+    model.plant = om.Group()
+    model.driver_config = {}
+    model.plant_config = {
+        "plant": {
+            "plant_life": 3,
+            "simulation": {"n_timesteps": n_timesteps, "dt": 3600},
+        }
+    }
+    model.technology_config = {
+        "technologies": {
+            "test_technology": {
+                "finance_model": {"model": "FinanceModel"},
+                "model_inputs": {},
+            }
+        }
+    }
+    model.supported_models = {"FinanceModel": FinanceModel}
+    model.slc = False
+
+    if is_supported:
+        model.create_technology_models()
+        assert model.finance_models == [FinanceModel]
+    else:
+        with pytest.raises(ValueError, match=r"Model FinanceModel.*simulation durations"):
+            model.create_technology_models()
+        assert model.finance_models == []
+
+
+@pytest.mark.unit
+def test_system_finance_group_defaults_to_annual_only_duration() -> None:
+    """Reject nonannual horizons for finance-group models without duration bounds."""
+
+    class AnnualOnlyFinanceModel:
+        """Finance model that must not be constructed for a half-year simulation."""
+
+        def __init__(self, **kwargs) -> None:
+            raise AssertionError("duration validation should run before construction")
+
+    model = object.__new__(H2IntegrateModel)
+    model.driver_config = {}
+    model.plant_config = {
+        "plant": {
+            "plant_life": 3,
+            "simulation": {"n_timesteps": 4380, "dt": 3600},
+        },
+        "finance_parameters": {
+            "finance_groups": {
+                "commodity": "hydrogen",
+                "commodity_stream": "test_technology",
+                "finance_model": "AnnualOnlyFinanceModel",
+                "model_inputs": {},
+            }
+        },
+    }
+    model.technology_config = {"technologies": {"test_technology": {}}}
+    model.supported_models = {"AnnualOnlyFinanceModel": AnnualOnlyFinanceModel}
+
+    with pytest.raises(ValueError, match=r"Model AnnualOnlyFinanceModel.*simulation durations"):
+        model.create_finance_model()
+
+
+@pytest.mark.unit
+def test_check_model_is_steppable(subtests):
+
+    class TechControllerSteppable:
+        _is_steppable = True
+
+        def __str__(self):
+            return "TechControllerSteppable"
+
+    class TechControllerNonSteppable:
+        def __str__(self):
+            return "TechControllerNonSteppable"
+
+    class PerformanceModelSteppable:
+        _is_steppable = True
+
+        def __str__(self):
+            return "PerformanceModelSteppable"
+
+    class PerformanceModelNonSteppable:
+        def __str__(self):
+            return "PerformanceModelNonSteppable"
+
+    with subtests.test("Steppable classes"):
+        check_model_is_steppable(
+            control_strategies=[TechControllerSteppable()],
+            performance_models=[PerformanceModelSteppable()],
+        )
+
+    with subtests.test("Nonsteppable classes"):
+        with pytest.raises(AttributeError):
+            check_model_is_steppable(
+                control_strategies=[TechControllerNonSteppable()],
+                performance_models=[PerformanceModelSteppable(), PerformanceModelNonSteppable()],
+            )
+
+
+@pytest.mark.unit
+def test_check_time_marching_config(subtests):
+    with subtests.test("Valid window size enables time-marching"):
+        assert check_time_marching_config(8760, 24, False, False) is True
+
+    with subtests.test("Window size equal to n_timesteps is a normal simulation"):
+        assert check_time_marching_config(8760, 8760, True, True) is False
+
+    with subtests.test("Non-positive window size"):
+        with pytest.raises(ValueError, match=r"must be positive"):
+            check_time_marching_config(8760, 0, False, False)
+
+    with subtests.test("Window size greater than n_timesteps"):
+        with pytest.raises(ValueError, match=r"cannot be greater than n_timesteps \(8760\)"):
+            check_time_marching_config(8760, 9000, False, False)
+
+    with subtests.test("Window size does not divide n_timesteps"):
+        with pytest.raises(ValueError, match=r"divisible by n_timesteps_window \(7\)"):
+            check_time_marching_config(8760, 7, False, False)
+
+    with subtests.test("System-level control is not supported"):
+        with pytest.raises(NotImplementedError, match="system-level control"):
+            check_time_marching_config(8760, 24, True, False)
+
+    with subtests.test("Technology cycles are not supported"):
+        with pytest.raises(NotImplementedError, match="cycle"):
+            check_time_marching_config(8760, 24, False, True)
 
 
 @pytest.mark.unit
@@ -1046,7 +1270,7 @@ def test_resource_connection_error_missing_connection(temp_dir):
 
     with pytest.raises(ValueError) as excinfo:
         H2IntegrateModel(temp_highlevel_yaml)
-        assert "Resource models ['wind_resource'] are not in" in str(excinfo.value)
+    assert "Resource models ['site.wind_resource'] are not included" in str(excinfo.value)
 
 
 @pytest.mark.unit
@@ -1378,7 +1602,7 @@ def test_system_order(subtests):
 
 
 @pytest.mark.unit
-def test_no_sites_entry(temp_dir):
+def test_no_sites_entry(temp_dir, monkeypatch):
     """Verify that a model can set up and run without a ``sites`` entry in the plant config.
 
     Uses Example 32 (multivariable streams), whose plant_config intentionally
@@ -1387,7 +1611,7 @@ def test_no_sites_entry(temp_dir):
     example_folder = EXAMPLE_DIR / "32_multivariable_streams"
     shutil.copytree(example_folder, temp_dir / "32_multivariable_streams", dirs_exist_ok=True)
 
-    os.chdir(temp_dir / "32_multivariable_streams")
+    monkeypatch.chdir(temp_dir / "32_multivariable_streams")
 
     model = H2IntegrateModel(
         temp_dir / "32_multivariable_streams" / "32_multivariable_streams.yaml"
@@ -1397,8 +1621,6 @@ def test_no_sites_entry(temp_dir):
     # Smoke-check: combiner output flow should be the sum of the two producers
     flow_out = model.prob.get_val("gas_combiner.wellhead_gas_mixture:mass_flow_out", units="kg/h")
     assert flow_out.mean() > 0.0
-
-    os.chdir(Path(__file__).parent)
 
 
 @pytest.mark.unit
